@@ -1,3 +1,39 @@
+# Arquivos de ambiente
 .env
+.env.local
+
+# Ambientes virtuais
 /venv
-__pycache__
+/env
+/.venv
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Logs
+*.log
+ingest.log
+agent.log
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Databases (se local)
+*.db
+*.sqlite
+
+# Temporary files
+*.tmp
+.cache/

@@ -1,9 +1,17 @@
 import os
+import logging
 from dotenv import load_dotenv
 from langchain_core.prompts import PromptTemplate
-from langchain_core.runnables import RunnablePassthrough, RunnableParallel
+from langchain_core.runnables import RunnablePassthrough
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_postgres import PGVector
+
+# Configurar logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -35,44 +43,93 @@ RESPONDA A "PERGUNTA DO USUÁRIO"
 """
 
 CONNECTION_STRING = os.getenv("CONNECTION_STRING", "postgresql+psycopg2://postgres:postgres@localhost:5432/rag")
-COLLECTION_NAME = "document_vectors"
+COLLECTION_NAME = os.getenv("COLLECTION_NAME", "document_vectors")
+SEARCH_K = int(os.getenv("SEARCH_K", "10"))
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "models/embedding-001")
+LLM_MODEL = os.getenv("LLM_MODEL", "gemini-1.5-flash")
+TEMPERATURE = float(os.getenv("TEMPERATURE", "0"))
+
 
 def search(question: str):
     """
     Performs a similarity search in the database and returns the answer from the LLM.
+    
+    Args:
+        question: A pergunta do usuário
+        
+    Returns:
+        Response object com a resposta do LLM
+        
+    Raises:
+        ValueError: Se a pergunta estiver vazia
+        ConnectionError: Se não conseguir conectar ao banco
     """
-    embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/embedding-001"
-    )
-    store = PGVector(
-        collection_name=COLLECTION_NAME,
-        connection=CONNECTION_STRING,
-        embedding_function=embeddings,
-    )
-    retriever = store.as_retriever(search_kwargs={"k": 10})
-
-    prompt = PromptTemplate(
-        template=PROMPT_TEMPLATE,
-        input_variables=["context", "question"],
-    )
-
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash", temperature=0
-    )
-
-    def format_docs(docs):
-        return "\n\n".join(doc.page_content for doc in docs)
-
-    rag_chain = (
-        {"context": retriever | format_docs, "question": RunnablePassthrough()}
-        | prompt
-        | llm
-    )
-
-    return rag_chain.invoke(question)
+    try:
+        if not question or not question.strip():
+            raise ValueError("A pergunta não pode estar vazia")
+        
+        logger.info(f"Processando pergunta: {question[:100]}...")
+        
+        # Configurar embeddings
+        embeddings = GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
+        
+        # Conectar ao vector store
+        logger.debug(f"Conectando ao vector store (collection: {COLLECTION_NAME})...")
+        store = PGVector(
+            collection_name=COLLECTION_NAME,
+            connection=CONNECTION_STRING,
+            embeddings=embeddings,
+        )
+        
+        # Configurar retriever
+        retriever = store.as_retriever(search_kwargs={"k": SEARCH_K})
+        
+        # Configurar prompt
+        prompt = PromptTemplate(
+            template=PROMPT_TEMPLATE,
+            input_variables=["context", "question"],
+        )
+        
+        # Configurar LLM
+        logger.debug(f"Usando modelo {LLM_MODEL} com temperatura {TEMPERATURE}")
+        llm = ChatGoogleGenerativeAI(
+            model=LLM_MODEL, 
+            temperature=TEMPERATURE
+        )
+        
+        def format_docs(docs):
+            if not docs:
+                logger.warning("Nenhum documento relevante encontrado")
+                return "Nenhum contexto relevante encontrado."
+            logger.info(f"Encontrados {len(docs)} documentos relevantes")
+            return "\n\n".join(doc.page_content for doc in docs)
+        
+        # Criar chain RAG
+        rag_chain = (
+            {"context": retriever | format_docs, "question": RunnablePassthrough()}
+            | prompt
+            | llm
+        )
+        
+        # Executar busca
+        logger.info("Executando busca RAG...")
+        result = rag_chain.invoke(question)
+        logger.info("Busca concluída com sucesso")
+        
+        return result
+        
+    except ValueError as e:
+        logger.error(f"Erro de validação: {e}")
+        raise
+    except Exception as e:
+        logger.exception(f"Erro durante busca: {e}")
+        raise ConnectionError(f"Erro ao buscar informações: {e}")
 
 
 if __name__ == '__main__':
-    # Example of how to use the function
-    result = search("Qual o faturamento da Empresa SuperTechIABrazil?")
-    print(result.content)
+    # Exemplo de uso
+    try:
+        result = search("Qual o faturamento da Empresa SuperTechIABrazil?")
+        print(result.content)
+    except Exception as e:
+        print(f"Erro: {e}")
